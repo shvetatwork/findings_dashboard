@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Findings Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .dashboard-container { display: flex; flex-wrap: wrap; justify-content: space-around; }
+        .chart-container { width: 100%; margin-bottom: 20px; }
+        #upload-container { margin-bottom: 20px; }
+        .filter-container { margin-bottom: 20px; display: flex; gap: 20px; align-items: center;}
+        .filter-container label { font-weight: bold; }
+        .filter-container select { min-width: 150px; }
+        .chart-row { display: flex; flex-wrap: wrap; justify-content: space-around; }
+    </style>
+</head>
+<body>
+    <h1>Cloud Findings Dashboard</h1>
+    <div id="upload-container">
+        <input type="file" id="file-upload" accept=".csv">
+        <button id="upload-button">Upload CSV</button>
+    </div>
+    <div class="filter-container">
+        <label for="account-filter">Filter by Cloud Account:</label>
+        <select id="account-filter" multiple>
+            <option value="all" selected>All</option>
+        </select>
+        <label for="category-filter">Filter by Finding Category:</label>
+        <select id="category-filter" multiple>
+            <option value="all" selected>All</option>
+        </select>
+        <button onclick="applyFilters()">Apply Filters</button>
+    </div>
+    <div id="dashboard">
+        <!-- Charts will be added here -->
+    </div>
+
+    <script>
+        let allData = []; // Store all the data
+
+        document.getElementById('upload-button').addEventListener('click', handleFileUpload);
+
+        function handleFileUpload() {
+            const fileInput = document.getElementById('file-upload');
+            const file = fileInput.files[0];
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const csvText = event.target.result;
+                    Papa.parse(csvText, {
+                        header: true,
+                        dynamicTyping: true,
+                        complete: function(results) {
+                            if (results && results.data) {
+                                allData = results.data; // Store all data
+                                populateFilters(allData);
+                                createDashboard(allData);
+                            } else {
+                                alert("Error parsing CSV file.");
+                            }
+                        },
+                        error: function(error) {
+                            alert("Error parsing CSV file: " + error);
+                        }
+                    });
+                };
+                reader.readAsText(file);
+            } else {
+                alert("Please select a CSV file.");
+            }
+        }
+
+        function populateFilters(data) {
+            const accountFilter = document.getElementById('account-filter');
+            const categoryFilter = document.getElementById('category-filter');
+
+            const accounts = [...new Set(data.map(item => item['Cloud Account Name']).filter(Boolean))];
+            const categories = [...new Set(data.map(item => item.Category).filter(Boolean))];
+
+            accountFilter.innerHTML = '<option value="all" selected>All</option>'; // Reset options
+            categoryFilter.innerHTML = '<option value="all" selected>All</option>'; // Reset options
+
+            accounts.forEach(account => {
+                const option = document.createElement('option');
+                option.value = account;
+                option.text = account;
+                accountFilter.appendChild(option);
+            });
+
+            categories.forEach(category => {
+                const option = document.createElement('option');
+                option.value = category;
+                option.text = category;
+                categoryFilter.appendChild(option);
+            });
+        }
+
+        function applyFilters() {
+            const accountFilter = document.getElementById('account-filter');
+            const categoryFilter = document.getElementById('category-filter');
+
+            const selectedAccounts = Array.from(accountFilter.selectedOptions).map(option => option.value);
+            const selectedCategories = Array.from(categoryFilter.selectedOptions).map(option => option.value);
+
+            let filteredData = allData;
+
+            if (!selectedAccounts.includes('all')) {
+                filteredData = filteredData.filter(item => selectedAccounts.includes(item['Cloud Account Name']));
+            }
+
+            if (!selectedCategories.includes('all')) {
+                filteredData = filteredData.filter(item => selectedCategories.includes(item.Category));
+            }
+
+            createDashboard(filteredData);
+        }
+
+        function createDashboard(data) {
+            const dashboardContainer = document.getElementById('dashboard');
+            dashboardContainer.innerHTML = ''; // Clear previous charts
+
+            // 1. Findings by Category
+            const categoryCounts = {};
+            const categoryEntityTypes = {};
+            data.forEach(item => {
+                if (item && item.Category && item['Entity Type']) {
+                    categoryCounts[item.Category] = (categoryCounts[item.Category] || 0) + 1;
+                    categoryEntityTypes[item.Category] = categoryEntityTypes[item.Category] || [];
+                    if (!categoryEntityTypes[item.Category].includes(item['Entity Type'])) {
+                        categoryEntityTypes[item.Category].push(item['Entity Type']);
+                    }
+                }
+            });
+            const categoryNames = Object.keys(categoryCounts);
+            const categoryValues = Object.values(categoryCounts);
+            const categoryLabels = categoryNames.map(category => `${category} (${categoryEntityTypes[category].join(', ')})`);
+            const categoryData = [{
+                labels: categoryLabels,
+                values: categoryValues,
+                type: 'pie'
+            }];
+            const categoryChartDiv = document.createElement('div');
+            categoryChartDiv.classList.add('chart-container');
+            dashboardContainer.appendChild(categoryChartDiv);
+            Plotly.newPlot(categoryChartDiv, categoryData, {title: 'Findings by Category'});
+
+            // 2. Findings by Cloud Account
+            const accountCounts = {};
+            data.forEach(item => {
+                if (item && item['Cloud Account Name']) {
+                    accountCounts[item['Cloud Account Name']] = (accountCounts[item['Cloud Account Name']] || 0) + 1;
+                }
+            });
+            const accountNames = Object.keys(accountCounts);
+            const accountValues = Object.values(accountCounts);
+            const accountData = [{
+                x: accountNames,
+                y: accountValues,
+                type: 'bar'
+            }];
+            const accountChartDiv = document.createElement('div');
+            accountChartDiv.classList.add('chart-container');
+            dashboardContainer.appendChild(accountChartDiv);
+            Plotly.newPlot(accountChartDiv, accountData, {title: 'Findings by Cloud Account'});
+
+            // 3. Findings by Entity Type
+            const entityCounts = {};
+            data.forEach(item => {
+                if (item && item['Entity Type']) {
+                    entityCounts[item['Entity Type']] = (entityCounts[item['Entity Type']] || 0) + 1;
+                }
+            });
+            const entityNames = Object.keys(entityCounts);
+            const entityValues = Object.values(entityCounts);
+            const entityData = [{
+                x: entityNames,
+                y: entityValues,
+                type: 'bar'
+            }];
+            const entityChartDiv = document.createElement('div');
+            entityChartDiv.classList.add('chart-container');
+            dashboardContainer.appendChild(entityChartDiv);
+            Plotly.newPlot(entityChartDiv, entityData, {title: 'Findings by Entity Type'});
+        }
+    </script>
+</body>
+</html>

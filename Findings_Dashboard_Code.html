@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Findings Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .dashboard-container { display: flex; flex-wrap: wrap; justify-content: space-around; }
+        .chart-container { width: 45%; margin-bottom: 20px; }
+        #upload-container { margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Cloud Findings Dashboard</h1>
+    <div id="upload-container">
+        <input type="file" id="file-upload" accept=".csv">
+        <button onclick="handleFileUpload()">Upload CSV</button>
+    </div>
+    <div class="dashboard-container" id="dashboard">
+        <div class="chart-container" id="category-chart"></div>
+        <div class="chart-container" id="account-chart"></div>
+        <div class="chart-container" id="entity-chart"></div>
+    </div>
+
+    <script>
+        function handleFileUpload() {
+            const fileInput = document.getElementById('file-upload');
+            const file = fileInput.files[0];
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const csvText = event.target.result;
+                    Papa.parse(csvText, {
+                        header: true,
+                        dynamicTyping: true,
+                        complete: function(results) {
+                            if (results && results.data) {
+                                createDashboard(results.data);
+                            } else {
+                                alert("Error parsing CSV file.");
+                            }
+                        },
+                        error: function(error) {
+                            alert("Error parsing CSV file: " + error);
+                        }
+                    });
+                };
+                reader.readAsText(file);
+            } else {
+                alert("Please select a CSV file.");
+            }
+        }
+
+        function createDashboard(data) {
+            // 1. Findings by Category
+            const categoryCounts = {};
+            data.forEach(item => {
+                if (item && item.Category) { // Check if item and Category exist
+                    categoryCounts[item.Category] = (categoryCounts[item.Category] || 0) + 1;
+                }
+            });
+            const categoryNames = Object.keys(categoryCounts);
+            const categoryValues = Object.values(categoryCounts);
+            const categoryData = [{
+                labels: categoryNames,
+                values: categoryValues,
+                type: 'pie'
+            }];
+            Plotly.newPlot('category-chart', categoryData, {title: 'Findings by Category'});
+
+            // 2. Findings by Cloud Account
+            const accountCounts = {};
+            data.forEach(item => {
+                if (item && item['Cloud Account Name']) { // Check if item and Cloud Account Name exist
+                    accountCounts[item['Cloud Account Name']] = (accountCounts[item['Cloud Account Name']] || 0) + 1;
+                }
+            });
+            const accountNames = Object.keys(accountCounts);
+            const accountValues = Object.values(accountCounts);
+            const accountData = [{
+                x: accountNames,
+                y: accountValues,
+                type: 'bar'
+            }];
+            Plotly.newPlot('account-chart', accountData, {title: 'Findings by Cloud Account'});
+
+            // 3. Findings by Entity Type
+            const entityCounts = {};
+            data.forEach(item => {
+                if (item && item['Entity Type']) { // Check if item and Entity Type exist
+                    entityCounts[item['Entity Type']] = (entityCounts[item['Entity Type']] || 0) + 1;
+                }
+            });
+            const entityNames = Object.keys(entityCounts);
+            const entityValues = Object.values(entityCounts);
+            const entityData = [{
+                x: entityNames,
+                y: entityValues,
+                type: 'bar'
+            }];
+            Plotly.newPlot('entity-chart', entityData, {title: 'Findings by Entity Type'});
+        }
+    </script>
+</body>
+</html>

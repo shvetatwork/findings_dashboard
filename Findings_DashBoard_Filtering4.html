@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Findings Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .filter-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .filter-dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #f9f9f9;
+            min-width: 200px;
+            max-height: 300px;
+            overflow-y: auto;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1;
+            border: 1px solid #ccc;
+            resize: both;
+            overflow: auto;
+        }
+        .filter-dropdown-content.show {
+            display: block;
+        }
+        .filter-dropdown-content input[type="checkbox"] {
+            margin-right: 5px;
+        }
+        .filter-dropdown-content label {
+            display: block;
+            padding: 5px 10px;
+        }
+        .filter-dropdown-content label:hover {
+            background-color: #f1f1f1;
+        }
+        .filter-search {
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+        }
+        .filter-search input {
+            width: calc(100% - 16px);
+            padding: 5px;
+            border: 1px solid #ddd;
+        }
+        .filter-actions {
+            padding: 8px;
+            display: flex;
+            justify-content: space-around;
+            border-bottom: 1px solid #ddd;
+        }
+        .filter-actions button {
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loading-spinner {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .disabled-button {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="font-sans m-5">
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+    <h1 class="text-2xl font-bold mb-4">Cloud Findings Dashboard</h1>
+    <div id="upload-container" class="mb-4">
+        <input type="file" id="file-upload" accept=".csv" class="mb-2">
+        <button id="upload-button" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Upload CSV</button>
+    </div>
+    <div class="filter-container flex gap-4 items-center mb-4">
+        <div class="filter-dropdown">
+            <label for="account-filter" class="font-bold">Filter by Cloud Account:</label>
+            <button id="account-filter-button" class="bg-gray-200 hover:bg-gray-300 border border-gray-300 rounded py-2 px-4">Select Accounts</button>
+            <div id="account-filter" class="filter-dropdown-content">
+                <div class="filter-actions">
+                    <button onclick="selectAllOptions('account-filter')">Select All</button>
+                    <button onclick="selectNoneOptions('account-filter')">Select None</button>
+                </div>
+                <div class="filter-search"><input type="text" placeholder="Search Accounts" oninput="filterOptions('account-filter', this.value)"></div>
+                <!-- Options will be populated here -->
+            </div>
+        </div>
+        <div class="filter-dropdown">
+            <label for="category-filter" class="font-bold">Filter by Finding Category:</label>
+            <button id="category-filter-button" class="bg-gray-200 hover:bg-gray-300 border border-gray-300 rounded py-2 px-4">Select Categories</button>
+            <div id="category-filter" class="filter-dropdown-content">
+                 <div class="filter-actions">
+                    <button onclick="selectAllOptions('category-filter')">Select All</button>
+                    <button onclick="selectNoneOptions('category-filter')">Select None</button>
+                </div>
+                <div class="filter-search"><input type="text" placeholder="Search Categories" oninput="filterOptions('category-filter', this.value)"></div>
+                <!-- Options will be populated here -->
+            </div>
+        </div>
+        <button onclick="applyFilters()" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Apply Filters</button>
+    </div>
+    <div id="dashboard">
+        <!-- Charts will be added here -->
+    </div>
+
+    <script>
+        let allData = [];
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const uploadButton = document.getElementById('upload-button');
+        const filterButtons = document.querySelectorAll('.filter-container button');
+
+        function showLoading() {
+            loadingOverlay.style.display = 'flex';
+            uploadButton.classList.add('disabled-button');
+            filterButtons.forEach(button => button.classList.add('disabled-button'));
+            uploadButton.disabled = true;
+            filterButtons.forEach(button => button.disabled = true);
+        }
+
+        function hideLoading() {
+            loadingOverlay.style.display = 'none';
+            uploadButton.classList.remove('disabled-button');
+            filterButtons.forEach(button => button.classList.remove('disabled-button'));
+            uploadButton.disabled = false;
+            filterButtons.forEach(button => button.disabled = false);
+        }
+
+        document.getElementById('upload-button').addEventListener('click', handleFileUpload);
+
+        async function handleFileUpload() {
+            showLoading();
+            const fileInput = document.getElementById('file-upload');
+            const file = fileInput.files[0];
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = async function(event) {
+                    const csvText = event.target.result;
+                    Papa.parse(csvText, {
+                        header: true,
+                        dynamicTyping: true,
+                        complete: function(results) {
+                            if (results && results.data) {
+                                allData = results.data;
+                                populateFilters(allData);
+                                createDashboard(allData);
+                                hideLoading();
+                            } else {
+                                alert("Error parsing CSV file.");
+                                hideLoading();
+                            }
+                        },
+                        error: function(error) {
+                            alert("Error parsing CSV file: " + error);
+                            hideLoading();
+                        }
+                    });
+                };
+                reader.readAsText(file);
+            } else {
+                alert("Please select a CSV file.");
+                hideLoading();
+            }
+        }
+
+        function populateFilters(data) {
+            const accountFilter = document.getElementById('account-filter');
+            const categoryFilter = document.getElementById('category-filter');
+
+            const accounts = [...new Set(data.map(item => item['Cloud Account Name']).filter(Boolean))];
+            const categories = [...new Set(data.map(item => item.Category).filter(Boolean))];
+
+            accountFilter.innerHTML = `
+                <div class="filter-actions">
+                    <button onclick="selectAllOptions('account-filter')">Select All</button>
+                    <button onclick="selectNoneOptions('account-filter')">Select None</button>
+                </div>
+                <div class="filter-search"><input type="text" placeholder="Search Accounts" oninput="filterOptions('account-filter', this.value)"></div>
+            `;
+            categoryFilter.innerHTML = `
+                <div class="filter-actions">
+                    <button onclick="selectAllOptions('category-filter')">Select All</button>
+                    <button onclick="selectNoneOptions('category-filter')">Select None</button>
+                </div>
+                <div class="filter-search"><input type="text" placeholder="Search Categories" oninput="filterOptions('category-filter', this.value)"></div>
+            `;
+
+            accounts.forEach(account => {
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = account;
+                checkbox.checked = true;
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(account));
+                accountFilter.appendChild(label);
+            });
+
+            categories.forEach(category => {
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = category;
+                checkbox.checked = true;
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(category));
+                categoryFilter.appendChild(label);
+            });
+
+            // Event listeners for dropdown toggling
+            document.getElementById('account-filter-button').addEventListener('click', (event) => {
+                event.stopPropagation();
+                toggleDropdown('account-filter');
+            });
+            document.getElementById('category-filter-button').addEventListener('click', (event) => {
+                event.stopPropagation();
+                toggleDropdown('category-filter');
+            });
+        }
+
+        function toggleDropdown(dropdownId) {
+            const dropdown = document.getElementById(dropdownId);
+            dropdown.classList.toggle('show');
+        }
+
+        function filterOptions(dropdownId, searchText) {
+            const dropdown = document.getElementById(dropdownId);
+            const labels = dropdown.querySelectorAll('label');
+            searchText = searchText.toLowerCase();
+
+            labels.forEach(label => {
+                const text = label.textContent.toLowerCase();
+                if (text.includes(searchText)) {
+                    label.style.display = '';
+                } else {
+                    label.style.display = 'none';
+                }
+            });
+        }
+
+        function selectAllOptions(dropdownId) {
+            const dropdown = document.getElementById(dropdownId);
+            const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = true;
+            });
+        }
+
+        function selectNoneOptions(dropdownId) {
+            const dropdown = document.getElementById(dropdownId);
+            const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        }
+
+        async function applyFilters() {
+            showLoading();
+            const accountFilter = document.getElementById('account-filter');
+            const categoryFilter = document.getElementById('category-filter');
+
+            const selectedAccounts = Array.from(accountFilter.querySelectorAll('input[type="checkbox"]:checked')).map(checkbox => checkbox.value);
+            const selectedCategories = Array.from(categoryFilter.querySelectorAll('input[type="checkbox"]:checked')).map(checkbox => checkbox.value);
+
+            let filteredData = allData;
+
+            if (selectedAccounts.length > 0) {
+                filteredData = filteredData.filter(item => selectedAccounts.includes(item['Cloud Account Name']));
+            }
+
+            if (selectedCategories.length > 0) {
+                filteredData = filteredData.filter(item => selectedCategories.includes(item.Category));
+            }
+
+            createDashboard(filteredData);
+            hideLoading();
+        }
+
+        function createDashboard(data) {
+            const dashboardContainer = document.getElementById('dashboard');
+            dashboardContainer.innerHTML = '';
+
+            // 1. Findings by Category
+            const categoryCounts = {};
+            const categoryEntityTypes = {};
+            data.forEach(item => {
+                if (item && item.Category && item['Entity Type']) {
+                    categoryCounts[item.Category] = (categoryCounts[item.Category] || 0) + 1;
+                    categoryEntityTypes[item.Category] = categoryEntityTypes[item.Category] || [];
+                    if (!categoryEntityTypes[item.Category].includes(item['Entity Type'])) {
+                        categoryEntityTypes[item.Category].push(item['Entity Type']);
+                    }
+                }
+            });
+            const categoryNames = Object.keys(categoryCounts);
+            const categoryValues = Object.values(categoryCounts);
+            const categoryLabels = categoryNames.map(category => `${category} (${categoryEntityTypes[category].join(', ')})`);
+            const categoryData = [{
+                labels: categoryLabels,
+                values: categoryValues,
+                type: 'pie'
+            }];
+            const categoryChartDiv = document.createElement('div');
+            categoryChartDiv.classList.add('chart-container');
+            dashboardContainer.appendChild(categoryChartDiv);
+            Plotly.newPlot(categoryChartDiv, categoryData, {title: 'Findings by Category'});
+
+            // 2. Findings by Cloud Account
+            const accountCounts = {};
+            data.forEach(item => {
+                if (item && item['Cloud Account Name']) {
+                    accountCounts[item['Cloud Account Name']] = (accountCounts[item['Cloud Account Name']] || 0) + 1;
+                }
+            });
+            const accountNames = Object.keys(accountCounts);
+            const accountValues = Object.values(accountCounts);
+            const accountData = [{
+                x: accountNames,
+                y: accountValues,
+                type: 'bar'
+            }];
+            const accountChartDiv = document.createElement('div');
+            accountChartDiv.classList.add('chart-container');
+            dashboardContainer.appendChild(accountChartDiv);
+            Plotly.newPlot(accountChartDiv, accountData, {title: 'Findings by Cloud Account'});
+
+            // 3. Findings by Entity Type
+            const entityCounts = {};
+            data.forEach(item => {
+                if (item && item['Entity Type']) {
+                    entityCounts[item['Entity Type']] = (entityCounts[item['Entity Type']] || 0) + 1;
+                }
+            });
+            const entityNames = Object.keys(entityCounts);
+            const entityValues = Object.values(entityCounts);
+            const entityData = [{
+                x: entityNames,
+                y: entityValues,
+                type: 'bar'
+            }];
+            const entityChartDiv = document.createElement('div');
+            entityChartDiv.classList.add('chart-container');
+            dashboardContainer.appendChild(entityChartDiv);
+            Plotly.newPlot(entityChartDiv, entityData, {title: 'Findings by Entity Type'});
+        }
+
+        // Close dropdown when clicking outside
+        window.addEventListener('click', function(event) {
+            if (!event.target.closest('.filter-dropdown')) {
+                const dropdowns = document.querySelectorAll('.filter-dropdown-content');
+                dropdowns.forEach(dropdown => {
+                    if (dropdown.classList.contains('show')) {
+                        dropdown.classList.remove('show');
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>
